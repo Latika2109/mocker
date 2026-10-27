@@ -1,153 +1,83 @@
 "use client";
-
-import { useEffect, useState } from "react";
-import React from "react";
-import Webcam from "react-webcam";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
-import { Button } from "@/components/ui/button";
+import Webcam from "react-webcam";
+import useSpeechToText from "react-hook-speech-to-text";
 import { Mic, StopCircle } from "lucide-react";
 import { toast } from "sonner";
-import { chatSession } from "@/utils/GeminiAIModal";
-import useSpeechToText from "react-hook-speech-to-text";
-import { db } from "@/utils/db";
-import { useUser } from "@clerk/nextjs";
-import moment from "moment";
+import { Button } from "@/components/ui/button";
+import { saveAnswer } from "@/app/actions/interview";
 
-function RecordAnswerSection({ mockInterviewQuestions = [], activeQuestionIndex, interviewData }) {
-  const [userAnswer, setUserAnswer] = useState("");
-  const { user } = useUser();
-  const [loading, setLoading] = useState(false);
+const MIN_ANSWER_LENGTH = 10;
 
-  const { error, interimResult, isRecording, results, startSpeechToText, stopSpeechToText } = useSpeechToText({
-    continuous: true,
-    useLegacyResults: false,
-  });
+function RecordAnswerSection({ mockId, questionIndex }) {
+  const [saving, setSaving] = useState(false);
+  // True from pressing Record until the recognizer ends, so an answer is saved
+  // whether the user stops it or the browser ends it after a pause.
+  const active = useRef(false);
+  const { error, interimResult, isRecording, results, setResults, startSpeechToText, stopSpeechToText } =
+    useSpeechToText({ continuous: true, useLegacyResults: false });
+
+  const transcript = [...results.map((r) => r.transcript), interimResult].filter(Boolean).join(" ").trim();
+
+  // The recognizer has finished (isRecording flipped to false), so `results` is final.
+  useEffect(() => {
+    if (isRecording || !active.current) return;
+    active.current = false;
+
+    if (transcript.length < MIN_ANSWER_LENGTH) {
+      toast.error("Answer is too short, please record again");
+      return;
+    }
+    setSaving(true);
+    saveAnswer({ mockId, questionIndex, userAnswer: transcript })
+      .then(() => toast.success("Answer recorded successfully"))
+      .catch((e) => toast.error(e.message || "Failed to save answer"))
+      .finally(() => setSaving(false));
+  }, [isRecording]);
+
+  // Moving to another question discards any recording in progress.
+  useEffect(() => {
+    active.current = false;
+    stopSpeechToText();
+    setResults([]);
+  }, [questionIndex]);
 
   useEffect(() => {
-    if (results && Array.isArray(results)) {
-      setUserAnswer(results.map(result => result.transcript).join(" "));
-    }
-  }, [results]);
+    if (error) toast.error(error);
+  }, [error]);
 
-  useEffect(() => {
-    if (!isRecording && userAnswer.length > 10) {
-      UpdateUserAnswerInDb();
-    }
-  }, [userAnswer]);
-
-  const StartStopRecording = async () => {
-    if (isRecording) {
-      stopSpeechToText();
-      if (userAnswer?.length < 10) {
-        setLoading(false);
-        toast.error("Answer is too short, Please record again");
-        return;
-      }
-    } else {
-      setUserAnswer(""); // Reset user answer state for a new recording
-      startSpeechToText();
-    }
-  };
-
-  const UpdateUserAnswerInDb = async () => {
-    console.log("User Answer:", userAnswer);
-    setLoading(true);
-
-    // Validate mockInterviewQuestions array
-    if (!mockInterviewQuestions || !Array.isArray(mockInterviewQuestions) || mockInterviewQuestions.length === 0) {
-      console.error("mockInterviewQuestions is empty or not an array");
-      toast.error("No questions available.");
-      setLoading(false);
-      return;
-    }
-
-    // Validate activeQuestionIndex
-    if (activeQuestionIndex < 0 || activeQuestionIndex >= mockInterviewQuestions.length) {
-      console.error("Invalid activeQuestionIndex:", activeQuestionIndex);
-      toast.error("Invalid question index.");
-      setLoading(false);
-      return;
-    }
-
-    const selectedQuestion = mockInterviewQuestions[activeQuestionIndex];
-
-    if (!selectedQuestion || !selectedQuestion.question) {
-      console.error("Selected question is undefined or missing properties");
-      toast.error("Question data is missing.");
-      setLoading(false);
-      return;
-    }
-
-    // AI-generated feedback prompt
-    const feedbackPrompt = `
-      Question: ${selectedQuestion.question},
-      User Answer: ${userAnswer}.
-      Please give us a rating for the answer and feedback as an area of improvement
-      if any in just 5-7 lines to improve it in JSON format with rating and feedback fields.
-    `;
-
-    try {
-      const result = await chatSession.sendMessage(feedbackPrompt);
-      const responseText = await result.response.text();
-      const jsonStart = responseText.indexOf('{');
-      const jsonEnd = responseText.lastIndexOf('}') + 1;
-      const mockJsonResp = responseText.slice(jsonStart, jsonEnd);
-      const JsonFeedbackResp = JSON.parse(mockJsonResp);
-
-      // Insert into DB
-      const resp = await db.insert("user_answers").values({
-        mockIdRef: interviewData?.mockId,
-        question: selectedQuestion?.question || "Unknown",
-        correctAnswer: selectedQuestion?.correctAnswer || "Unknown",
-        userAnswer: userAnswer,
-        feedback: JsonFeedbackResp?.feedback,
-        rating: JsonFeedbackResp?.rating,
-        userEmail: user?.primaryEmailAddress?.emailAddress,
-        createdAt: moment().format('YYYY-MM-DD HH:mm:ss'),
-      });
-
-      if (resp) {
-        toast("User Answer Recorded Successfully");
-      }
-      setUserAnswer("");
-    } catch (error) {
-      console.error("Error processing feedback:", error);
-      toast.error("Failed to save answer.");
-    } finally {
-      setLoading(false);
-    }
+  const toggleRecording = () => {
+    if (isRecording) return stopSpeechToText();
+    setResults([]);
+    active.current = true;
+    startSpeechToText();
   };
 
   return (
     <div className="flex items-center justify-center flex-col">
-      <div className="flex flex-col mt-20 justify-center items-center bg-black rounded-lg p-10">
-        <Image src={"/webcam.png"} width={200} height={200} alt="webcam" className="absolute" />
-        <Webcam
-          style={{
-            mirrored: true,
-            height: 300,
-            width: "100%",
-            zIndex: 10,
-          }}
-        />
+      <div className="relative flex flex-col mt-20 justify-center items-center bg-black rounded-lg p-10">
+        <Image src="/webcam.png" width={200} height={200} alt="webcam" className="absolute" />
+        <Webcam mirrored style={{ height: 300, width: "100%", zIndex: 10 }} />
       </div>
-      <Button 
-        disabled={loading}
-        variant="outline" 
-        className="my-10" 
-        onClick={StartStopRecording}
-      >
-        {isRecording ? 
-          <h2 className="text-red-600 animate-pulse flex gap-2 items-center">
-            <StopCircle/> Stop Recording
-          </h2>
-        : <h2 className="text-primary flex gap-2 items-center">
-          <Mic/> Record Answer
-        </h2>
-        }
+      <Button disabled={saving || !!error} variant="outline" className="my-6" onClick={toggleRecording}>
+        {saving ? (
+          "Saving..."
+        ) : isRecording ? (
+          <span className="text-red-600 animate-pulse flex gap-2 items-center">
+            <StopCircle /> Stop Recording
+          </span>
+        ) : (
+          <span className="text-primary flex gap-2 items-center">
+            <Mic /> Record Answer
+          </span>
+        )}
       </Button>
-      <Button onClick={() => console.log("User Answer:", userAnswer)}>Show User Answer</Button>
+      {(isRecording || transcript) && (
+        <p className="max-w-md text-sm text-gray-600 text-center">{transcript || "Listening..."}</p>
+      )}
     </div>
   );
 }
+
 export default RecordAnswerSection;

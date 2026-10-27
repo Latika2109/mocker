@@ -1,172 +1,87 @@
 "use client";
 import React, { useState } from "react";
+import { useRouter } from "next/navigation";
+import { LoaderCircle } from "lucide-react";
+import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { chatSession } from "@/utils/GeminiAIModal";
-import { LoaderCircle } from "lucide-react";
-import { MockInterview } from "@/utils/schema";
-import { v4 as uuidv4 } from 'uuid';
-import { useUser } from "@clerk/nextjs";
-import moment from "moment/moment";
-import { db } from "@/utils/db";
-import { useRouter } from "next/navigation";
+import { createInterview } from "@/app/actions/interview";
 
 function AddNewInterview() {
-  const [openDialog, setOpenDialog] = useState(false);
-  const [jobPosition, setJobPosition] = useState("");
-  const [jobDescription, setJobDescription] = useState("");
-  const [jobExperience, setJobExperience] = useState("");
+  const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [jsonResponse, setJsonResponse] = useState([]);
-  const { user } = useUser();
   const router = useRouter();
 
   const onSubmit = async (e) => {
-    setLoading(true);
     e.preventDefault();
-    console.log(jobPosition, jobDescription, jobExperience);
-
-    const inputPrompt =
-      "Job Position: " +
-      jobPosition +
-      ", job description: " +
-      jobDescription +
-      ", job experience: " +
-      jobExperience +
-      ", Based on this generate " +
-      process.env.NEXT_PUBLIC_INTERVIEW_COUNT +
-      " interview questions and give both question and answers in JSON format";
-
+    const form = new FormData(e.currentTarget);
+    setLoading(true);
     try {
-      const result = await chatSession.sendMessage(inputPrompt);
-      let mockJsonResponse = await result.response.text();
-      mockJsonResponse = mockJsonResponse
-        .replace("```json", '')
-        .replace("```", '');
-
-      console.log(mockJsonResponse);
-      const parsedResponse = JSON.parse(mockJsonResponse);
-      setJsonResponse(parsedResponse);
-
-      if (parsedResponse) {
-        const response = await db.insert(MockInterview)
-          .values({
-            mockId: uuidv4(),
-            jsonMockResp: JSON.stringify(parsedResponse),
-            jobPosition: jobPosition,
-            jobDesc: jobDescription,
-            jobExperience: jobExperience,
-            createdBy: user?.primaryEmailAddress?.emailAddress,
-            createdAt: moment().toDate()
-          }).returning({ mockId: MockInterview.mockId });
-
-        console.log("Inserted ID:", response);
-        if (response) {
-          setOpenDialog(false);
-          router.push('/dashboard/interview/' + response[0]?.mockId);
-        }
-      } else {
-        console.log("ERROR");
-      }
+      const mockId = await createInterview({
+        jobPosition: form.get("jobPosition"),
+        jobDesc: form.get("jobDesc"),
+        jobExperience: form.get("jobExperience"),
+      });
+      router.push(`/dashboard/interview/${mockId}`);
     } catch (error) {
-      console.error("Error generating interview questions:", error);
+      toast.error(error.message || "Failed to generate interview questions");
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   return (
     <div>
       <div
         className="p-10 border rounded-lg bg-secondary hover:scale-105 hover:shadow-md hover:cursor-pointer transition-all"
-        onClick={() => setOpenDialog(true)}
+        onClick={() => setOpen(true)}
       >
         <h2 className="font-bold text-lg text-center">+ Add New</h2>
       </div>
 
-      <Dialog open={openDialog}>
+      <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="text-2xl">
-              Tell us more about the job you are interviewing for
-            </DialogTitle>
+            <DialogTitle className="text-2xl">Tell us more about the job you are interviewing for</DialogTitle>
             <DialogDescription>
-              <form onSubmit={onSubmit}>
-                <div>
-                  <h2>
-                    Add details about your job position/role, job descriptions,
-                    and years of experience
-                  </h2>
-                  <div className="mt-7 my-4">
-                    <label>Job Role/Job Position</label>
-                    <Input
-                      placeholder="Ex. Full Stack Developer"
-                      required
-                      onChange={(event) =>
-                        setJobPosition(event.target.value)
-                      }
-                    />
-                  </div>
-
-                  <div className="my-4">
-                    <label>Job Description/Tech Stack (In Short)</label>
-                    <Textarea
-                      placeholder="Ex. Angular, React, NodeJs, MySQL"
-                      required
-                      onChange={(event) =>
-                        setJobDescription(event.target.value)
-                      }
-                    />
-                  </div>
-
-                  <div className="my-4">
-                    <label>Years of Experience</label>
-                    <Input
-                      placeholder="Ex. 5"
-                      type="number"
-                      max="50"
-                      required
-                      onChange={(event) =>
-                        setJobExperience(event.target.value)
-                      }
-                    />
-                  </div>
-                </div>
-                <div className="flex gap-5 justify-end">
-                  <button
-                    type="button"
-                    className="mt-5"
-                    variant="ghost"
-                    onClick={() => setOpenDialog(false)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="mt-5 px-4 py-2 text-base font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-all flex items-center gap-2"
-                  >
-                    {loading ? (
-                      <>
-                        <LoaderCircle className="animate-spin w-5 h-5" />
-                        <span>Generating from AI</span>
-                      </>
-                    ) : (
-                      "Start Interview"
-                    )}
-                  </button>
-                </div>
-              </form>
+              Add details about your job position/role, job description and years of experience
             </DialogDescription>
           </DialogHeader>
+          <form onSubmit={onSubmit} className="space-y-4">
+            <div>
+              <label>Job Role/Job Position</label>
+              <Input name="jobPosition" placeholder="Ex. Full Stack Developer" required />
+            </div>
+            <div>
+              <label>Job Description/Tech Stack (In Short)</label>
+              <Textarea name="jobDesc" placeholder="Ex. Angular, React, NodeJs, MySQL" required />
+            </div>
+            <div>
+              <label>Years of Experience</label>
+              <Input name="jobExperience" type="number" min="0" max="50" placeholder="Ex. 5" required />
+            </div>
+            <div className="flex gap-5 justify-end">
+              <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={loading}>
+                {loading ? (
+                  <>
+                    <LoaderCircle className="animate-spin" /> Generating from AI
+                  </>
+                ) : (
+                  "Start Interview"
+                )}
+              </Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

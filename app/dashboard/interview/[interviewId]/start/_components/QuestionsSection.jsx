@@ -1,37 +1,31 @@
 import { Lightbulb, Volume2 } from "lucide-react";
-import React from "react";
 
-function QuestionsSection({ mockInterviewQuestions = [], activeQuestionIndex, onQuestionClick }) {
-  if (!Array.isArray(mockInterviewQuestions)) {
-    console.error("mockInterviewQuestions is not an array:", mockInterviewQuestions);
-    mockInterviewQuestions = [];
-  }
-
-  const textToSpeech = (text) => {
-    if ("speechSynthesis" in window) {
-      const speech = new SpeechSynthesisUtterance(text);
-      window.speechSynthesis.speak(speech);
-    } else {
+function QuestionsSection({ questions, activeIndex, onQuestionClick }) {
+  const speak = (text) => {
+    if (!("speechSynthesis" in window)) {
       alert("Sorry, your browser does not support text to speech");
+      return;
     }
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
   };
 
   return (
     <div className="p-5 border rounded-lg my-10">
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-        {mockInterviewQuestions.map((question, index) => (
+        {questions.map((_, index) => (
           <h2
             key={index}
-            className={`p-2 bg-secondary rounded-full text-xs md:text-sm text-center cursor-pointer ${activeQuestionIndex == index && "bg-green-600 text-white"}`}
+            className={`p-2 rounded-full text-xs md:text-sm text-center cursor-pointer ${
+              activeIndex === index ? "bg-green-600 text-white" : "bg-secondary"
+            }`}
             onClick={() => onQuestionClick(index)}
           >
             Question #{index + 1}
           </h2>
         ))}
       </div>
-      <h2 className="my-8 text-md md:text-lg">{mockInterviewQuestions[activeQuestionIndex]?.question}</h2>
-
-      <Volume2 className="cursor-pointer" onClick={() => textToSpeech(mockInterviewQuestions[activeQuestionIndex]?.question)} />
+      <h2 className="my-8 text-md md:text-lg">{questions[activeIndex]?.question}</h2>
+      <Volume2 className="cursor-pointer" onClick={() => speak(questions[activeIndex]?.question)} />
 
       <div className="border rounded-lg p-5 bg-blue-100 mt-20">
         <h2 className="flex gap-2 items-center text-blue-700">
